@@ -3,6 +3,7 @@ import uuid
 from concurrent import futures
 
 import grpc
+# gets the generated files from grpc
 from shared.gen import catalog_pb2, catalog_pb2_grpc
 
 # In-memory database
@@ -11,7 +12,8 @@ BOOKS: dict[str, dict] = {}
 
 class CatalogService(catalog_pb2_grpc.CatalogServiceServicer):
     def PublishBook(self, request, context):
-        book_id = str(uuid.uuid4())
+        # makes the unique book id
+        book_id = str(uuid.uuid4())[:8]
         BOOKS[book_id] = {"book_id": book_id, "title": request.title, "author": request.author}
 
         return catalog_pb2.BookResponse(

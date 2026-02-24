@@ -21,6 +21,7 @@
 
     <hr/>
 
+    <!--Retrieve User-->
     <h2>Get User</h2>
     <form method="get" action="/users">
         <label>User ID:</label>
@@ -28,8 +29,29 @@
         <button type="submit">Get User</button>
     </form>
 
-    <!--need to add a result for looking up the user-->
-    <!--Either that or give's you a "thanks for registering name"-->
+    <!--By using jinja2 template we are able to inject python backend into HTML-->
+    <!--We are able to do python if statements: if result: show message and inject it in the HTML-->
+  {% if result %}
+    <div class="result">
+      {% if result.ok %}
+        <p><strong>Success:</strong> {{ result.message }}</p>
+      {% else %}
+        <p><strong>Error:</strong> {{ result.message }}</p>
+      {% endif %}
+
+      {% if result.user_id %}
+        <p><strong>User ID:</strong> {{ result.user_id }}</p>
+      {% endif %}
+
+      {% if result.name %}
+        <p><strong>Name:</strong> {{ result.name }}</p>
+      {% endif %}
+
+      {% if result.email %}
+        <p><strong>Email:</strong> {{ result.email }}</p>
+      {% endif %}
+    </div>
+  {% endif %}
 
     <a class="back" href="/"> Back to Home</a>
 </div>

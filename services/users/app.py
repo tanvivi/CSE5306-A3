@@ -15,7 +15,7 @@ USERS = {}
 # Receives: request.name, request.email and Returns: UserResponse.
 class UsersService(users_pb2_grpc.UsersServiceServicer):
     def RegisterUser(self, request, context):
-        user_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())[:8]
         USERS[user_id] = {
             "user_id": user_id,
             "name": request.name,

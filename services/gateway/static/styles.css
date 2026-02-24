@@ -26,6 +26,15 @@ form {
     margin-bottom: 20px;
 }
 
+/**This shows the users.html results**/
+.result {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid #ddd;
+  background: #fafafa;
+  border-radius: 6px;
+}
+
 label {
     display: block;
     margin-top: 10px;

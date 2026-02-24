@@ -53,7 +53,6 @@ def users_page(request: Request, user_id: str | None = None):
             }
         # added the try & except for Error Handling might remove later. -ep
         except grpc.RpcError as e:
-            result = { "ok": False, "message": f"gRPC error calling Users"}
 
     # Renders the users.html page and passes the result to the template.
     return templates.TemplateResponse(

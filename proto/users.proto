@@ -18,8 +18,9 @@ message GetUserRequest {
 message UserResponse {
   bool ok = 1;
   string message = 2;
-  
+
   string user_id = 3;
   string name = 4;
   string email = 5;
 }
+
