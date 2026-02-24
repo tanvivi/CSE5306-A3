@@ -32,3 +32,27 @@ services:
     environment:
       - PORT=50051
    # gRPC port 50051
+
+  inventory:
+    build:
+      context: .
+      dockerfile: services/inventory/Dockerfile
+    container_name: library-inventory
+    environment:
+      - PORT=50051
+
+  circulation:
+    build:
+      context: .
+      dockerfile: services/circulation/Dockerfile
+    container_name: library-circulation
+    environment:
+      - PORT=50051
+
+  audit:
+    build:
+      context: .
+      dockerfile: services/audit/Dockerfile
+    container_name: library-audit
+    environment:
+      - PORT=50051

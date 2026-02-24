@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 # used to serve static CSS files (points to the Folder that has our CSS)
 from fastapi.templating import Jinja2Templates
 # template for HTML pages in the template folder
-from shared.gen import users_pb2, catalog_pb2
+from shared.gen import users_pb2, catalog_pb2, inventory_pb2, circulation_pb2, audit_pb2
 # combines users_pb2 & catalog_pb2 
 import grpc, grpc_clients
 
@@ -25,6 +25,8 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # HTML TEMPLATE
 # - the jinja2templates HTML template we are using
 templates = Jinja2Templates(directory="templates")
+bookIDs = []
+logNum = 0
 
 # Page routes ========================================================
 # - Get: to read data. (reads HTML response)
@@ -64,8 +66,9 @@ def users_page(request: Request, user_id: str | None = None):
 @app.get("/books", response_class=HTMLResponse)
 def books_page(request: Request, book_id: str | None = None):
     result = None
-    if book_id:
-        res = grpc_clients.catalog_stub().GetBook(catalog_pb2.GetBookRequest(book_id=book_id))
+    #if book_id:
+    for b in bookIDs:
+        res = grpc_clients.catalog_stub().GetBook(catalog_pb2.GetBookRequest(book_id=b))
         result = {
             "ok": res.ok,
             "message": res.message,
@@ -73,6 +76,7 @@ def books_page(request: Request, book_id: str | None = None):
             "title": res.title,
             "author": res.author,
         }
+        print(res.title +  " " + res.author + " " + res.book_id)
     return templates.TemplateResponse(
         "books.html",
         {"request": request, "result": result}
@@ -89,6 +93,7 @@ def register_user(
     name: str = Form(...),
     email: str = Form(...)
     ):
+    global logNum
     res = grpc_clients.users_stub().RegisterUser(
         users_pb2.RegisterUserRequest(name=name, email=email),
         timeout=3,
@@ -98,6 +103,10 @@ def register_user(
         "message": res.message,
         "user_id": res.user_id
     }
+    print(res.user_id)
+    comp = res.user_id + " registered as new user"
+    res = grpc_clients.audit_stub().LogEvent(audit_pb2.LogRequest(event_type="1", description=comp))
+    logNum += 1
     # Shows page with results
     return templates.TemplateResponse(
         "users.html",
@@ -113,6 +122,7 @@ def publish_book(
     title: str = Form(...),
     author: str = Form(...)
     ):
+    global logNum
     res = grpc_clients.catalog_stub().PublishBook(
         catalog_pb2.PublishBookRequest(title=title, author=author)
     )
@@ -122,10 +132,134 @@ def publish_book(
         "book_id": res.book_id
         }
     # Shows page with result
+    res1 = grpc_clients.inventory_stub().AddCopies(inventory_pb2.AddCopiesRequest(book_id=res.book_id, count=1), timeout=3,)
+    comp = res.book_id + " published"
+    res2 = grpc_clients.audit_stub().LogEvent(audit_pb2.LogRequest(event_type="1", description=comp))
+    bookIDs.append(res.book_id)
+    logNum += 1
     return templates.TemplateResponse(
         "books.html",
         {"request": request, "result": result}
         )
+
+@app.get("/inventory", response_class=HTMLResponse)
+def inventory_page(request: Request, book_id: str | None = None):
+    result = None
+
+    # if user_id is in the query string, call the Users gRPC service.
+    if book_id:
+        try:
+            res = grpc_clients.inventory_stub().GetAvailability(inventory_pb2.BookRequest(book_id=book_id))
+            result = {
+                "ok": res.ok,
+                "message": res.message,
+                "book_id": res.book_id,
+                "available": res.available
+            }
+            print(res.book_id + " " + str(res.available))
+        # added the try & except for Error Handling might remove later. -ep
+        except grpc.RpcError as e:
+            result = { "ok": False, "message": f"gRPC error calling Users"}
+
+    # Renders the users.html page and passes the result to the template.
+    return templates.TemplateResponse(
+        "inventory.html",
+        {"request": request, "result": result}
+    )
+
+@app.post("/inventory/add", response_class=HTMLResponse)
+def invetory_add(
+    request: Request,
+    book_id: str = Form(...),
+    count: int = Form(...)
+    ):
+    global logNum
+    res = grpc_clients.inventory_stub().AddCopies(
+        inventory_pb2.AddCopiesRequest(book_id=book_id, count=count),
+        timeout=3,
+    )
+    result = {
+        "ok": res.ok,
+        "message": res.message,
+        "book_id": res.book_id,
+        "available": res.available
+    }
+    comp = str(count) + " new copies of " + book_id + " added"
+    res = grpc_clients.audit_stub().LogEvent(audit_pb2.LogRequest(event_type="1", description=comp))
+    logNum += 1
+    # Shows page with results
+    return templates.TemplateResponse(
+        "inventory.html",
+        {"request": request, "result": result}
+    )
+
+@app.get("/circulation", response_class=HTMLResponse)
+def circulation_page(request: Request, book_id: str | None = None, user_id: str | None = None):
+    result = None
+    global logNum
+    # if user_id is in the query string, call the Users gRPC service.
+    if book_id and user_id:
+        try:
+            res1 = grpc_clients.inventory_stub().GetAvailability(inventory_pb2.BookRequest(book_id=book_id))
+            if res1.available >= 1:
+                res = grpc_clients.circulation_stub().CheckoutBook(circulation_pb2.CheckoutRequest(book_id=book_id, user_id=user_id))
+                res2 = grpc_clients.inventory_stub().DecrementCopy(inventory_pb2.BookRequest(book_id=book_id))
+                result = {
+                    "ok": res.ok,
+                    "message": res.message,
+                    "due_date": res.due_date
+                }
+                comp = book_id + " checked out by " + user_id
+                res = grpc_clients.audit_stub().LogEvent(audit_pb2.LogRequest(event_type="1", description=comp))
+                logNum += 1
+        # added the try & except for Error Handling might remove later. -ep
+        except grpc.RpcError as e:
+            result = { "ok": False, "message": f"gRPC error calling Users"}
+
+    # Renders the users.html page and passes the result to the template.
+    return templates.TemplateResponse(
+        "circulation.html",
+        {"request": request, "result": result}
+    )
+
+@app.post("/circulation/checkin", response_class=HTMLResponse)
+def circulation_checkout(request: Request, book_id: str = Form(...) , user_id: str = Form(...)):
+    result = None
+    global logNum
+    # if user_id is in the query string, call the Users gRPC service.
+
+    res = grpc_clients.circulation_stub().CheckinBook(circulation_pb2.CheckinRequest(book_id=book_id, user_id=user_id))
+    res2 = grpc_clients.inventory_stub().AddCopies(inventory_pb2.AddCopiesRequest(book_id=book_id, count=1),timeout=3,)
+    result = {
+        "ok": res.ok,
+        "message": res.message,
+    }
+    comp = book_id + " checked in by " + user_id
+    res1 = grpc_clients.audit_stub().LogEvent(audit_pb2.LogRequest(event_type="1", description=comp))
+    logNum += 1
+# added the try & except for Error Handling might remove later. -ep
+
+    # Renders the users.html page and passes the result to the template.
+    return templates.TemplateResponse(
+        "circulation.html",
+        {"request": request, "result": result}
+    )
+
+@app.get("/audit", response_class=HTMLResponse)
+def log_page(request: Request, book_id: str | None = None):
+    result = None
+    global logNum
+    for b in range(logNum):
+        res = grpc_clients.audit_stub().LogEvent(audit_pb2.LogRequest(event_type="2", description=str(b)))
+        result = {
+            "ok": res.ok,
+            "message": res.message,
+        }
+        print(res.message)
+    return templates.TemplateResponse(
+        "audit.html",
+        {"request": request, "result": result}
+    )
 
 # DEBUGGING
 # - used to confirm the gateway is running, returns JSON.
