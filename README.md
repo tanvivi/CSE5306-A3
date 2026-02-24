@@ -45,7 +45,7 @@
 <h3>Run the Project</h3>
 <ol>
   <li>Install the project repo, and go into the folder</li>
-  <li>Before building Docker containers, generate the Python gRPC files from the .proto definitions.<br> This generates the shared/gen/*folder*_pb2.py files & shared/gen/*folder*_pb2_grpc.py</li>
+  <li>Generate the Python gRPC files from the .proto definitions.<br> This generates the shared/gen/*folder*_pb2.py files & shared/gen/*folder*_pb2_grpc.py</li>
 
     python -m grpc_tools.protoc \
     -I proto \
