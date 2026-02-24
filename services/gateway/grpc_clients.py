@@ -5,7 +5,7 @@ import os
 import grpc
 
 # This imports generated stub classes
-from shared.gen import users_pb2_grpc, catalog_pb2_grpc, inventory_pb2_grpc, circulation_pb2_grpc
+from shared.gen import users_pb2_grpc, catalog_pb2_grpc, inventory_pb2_grpc, circulation_pb2_grpc, audit_pb2_grpc
 
 # Creates and returns a gRPC stub for the Users service.
 # addr comes from Docker environment var, and if not provided makes port 50051
@@ -29,3 +29,8 @@ def circulation_stub():
     addr = os.getenv("CIRCULATION_ADDR", "circulation:50051")
     channel = grpc.insecure_channel(addr)
     return circulation_pb2_grpc.CirculationServiceStub(channel)
+
+def audit_stub():
+    addr = os.getenv("AUDIT_ADDR", "audit:50051")
+    channel = grpc.insecure_channel(addr)
+    return audit_pb2_grpc.AuditServiceStub(channel)

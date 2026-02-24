@@ -48,3 +48,11 @@ services:
     container_name: library-circulation
     environment:
       - PORT=50051
+
+  audit:
+    build:
+      context: .
+      dockerfile: services/audit/Dockerfile
+    container_name: library-audit
+    environment:
+      - PORT=50051
