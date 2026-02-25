@@ -53,13 +53,15 @@ def users_page(request: Request, user_id: str | None = None):
                 "name": res.name,
                 "email": res.email,
             }
-        # added the try & except for Error Handling might remove later. -ep
         except grpc.RpcError as e:
-
+            result = {
+                "ok": False,
+                "message": f"gRPC error calling Users: {e.code()} - {e.details()}",
+            }
     # Renders the users.html page and passes the result to the template.
     return templates.TemplateResponse(
         "users.html",
-        {"request": request, "result": result}
+        {"request": request, "result": result},
     )
 
 # gets the book_id from the books.html section
