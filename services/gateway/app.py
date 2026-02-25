@@ -105,7 +105,7 @@ def register_user(
         "message": res.message,
         "user_id": res.user_id
     }
-    print(res.user_id)
+    print("your user id: " + res.user_id)
     comp = res.user_id + " registered as new user"
     res = grpc_clients.audit_stub().LogEvent(audit_pb2.LogRequest(event_type="1", description=comp))
     logNum += 1
