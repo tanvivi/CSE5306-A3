@@ -105,7 +105,7 @@ def register_user(
         "message": res.message,
         "user_id": res.user_id
     }
-    print(res.user_id)
+    print("your user id: " + res.user_id)
     comp = res.user_id + " registered as new user"
     res = grpc_clients.audit_stub().LogEvent(audit_pb2.LogRequest(event_type="1", description=comp))
     logNum += 1
@@ -211,9 +211,10 @@ def circulation_page(request: Request, book_id: str | None = None, user_id: str 
                     "message": res.message,
                     "due_date": res.due_date
                 }
-                comp = book_id + " checked out by " + user_id
+                comp = book_id + " checked out by " + user_id + ", due on " + res.due_date
                 res = grpc_clients.audit_stub().LogEvent(audit_pb2.LogRequest(event_type="1", description=comp))
                 logNum += 1
+                print(comp)
         # added the try & except for Error Handling might remove later. -ep
         except grpc.RpcError as e:
             result = { "ok": False, "message": f"gRPC error calling Users"}
@@ -237,6 +238,7 @@ def circulation_checkout(request: Request, book_id: str = Form(...) , user_id: s
         "message": res.message,
     }
     comp = book_id + " checked in by " + user_id
+    print(comp)
     res1 = grpc_clients.audit_stub().LogEvent(audit_pb2.LogRequest(event_type="1", description=comp))
     logNum += 1
 # added the try & except for Error Handling might remove later. -ep
