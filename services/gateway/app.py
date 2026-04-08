@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 # used to serve static CSS files (points to the Folder that has our CSS)
 from fastapi.templating import Jinja2Templates
 # template for HTML pages in the template folder
-from shared.gen import users_pb2, catalog_pb2, inventory_pb2, circulation_pb2, audit_pb2
+from shared.gen import users_pb2, catalog_pb2, inventory_pb2, circulation_pb2, audit_pb2, twopc_pb2
 # combines users_pb2 & catalog_pb2 
 import grpc, grpc_clients
 
@@ -264,6 +264,37 @@ def log_page(request: Request, book_id: str | None = None):
         "audit.html",
         {"request": request, "result": result}
     )
+
+# ── 2PC Vote Phase ────────────────────────────────────────────────────────────
+
+@app.get("/2pc", response_class=HTMLResponse)
+def twopc_page(request: Request):
+    return templates.TemplateResponse("twopc.html", {"request": request, "result": None})
+
+@app.post("/2pc/checkout", response_class=HTMLResponse)
+def twopc_checkout(
+    request: Request,
+    book_id: str = Form(...),
+    user_id: str = Form(...),
+):
+    res = grpc_clients.twopc_coordinator_stub().BeginTransaction(
+        twopc_pb2.BeginRequest(
+            operation="CHECKOUT",
+            book_id=book_id,
+            user_id=user_id,
+        )
+    )
+    result = {
+        "transaction_id": res.transaction_id,
+        "all_commit": res.all_commit,
+        "summary": res.summary,
+        "votes": [
+            {"participant": v.participant, "committed": v.committed, "reason": v.reason}
+            for v in res.votes
+        ],
+    }
+    return templates.TemplateResponse("twopc.html", {"request": request, "result": result})
+
 
 # DEBUGGING
 # - used to confirm the gateway is running, returns JSON.

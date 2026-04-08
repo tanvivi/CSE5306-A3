@@ -1,6 +1,9 @@
 version: "3.9"
 # the (.) signifies the repo root, so we point each service to the root context
 services:
+
+  # ── Original library services (unchanged) ───────────────────────────────────
+
   gateway:
     build:
       context: .
@@ -10,12 +13,20 @@ services:
       - PORT=8080
       - USERS_ADDR=users:50051
       - CATALOG_ADDR=catalog:50051
+      - INVENTORY_ADDR=inventory:50051
+      - CIRCULATION_ADDR=circulation:50051
+      - AUDIT_ADDR=audit:50051
+      - TWOPC_COORDINATOR_ADDR=twopc-coordinator:50051
     ports:
       - "8080:8080"
     depends_on:
       - users
       - catalog
-      # to test the service, only added the Node1, Node2 and Node3 sections. -ep
+      - inventory
+      - circulation
+      - audit
+      - twopc-coordinator
+
   users:
     build:
       context: .
@@ -31,7 +42,6 @@ services:
     container_name: library-catalog
     environment:
       - PORT=50051
-   # gRPC port 50051
 
   inventory:
     build:
@@ -56,3 +66,40 @@ services:
     container_name: library-audit
     environment:
       - PORT=50051
+
+  # ── 2PC nodes ────────────────────────────────────────────────────────────────
+
+  twopc-coordinator:
+    build:
+      context: .
+      dockerfile: services/twopc/coordinator/Dockerfile
+    container_name: twopc-coordinator
+    environment:
+      - PORT=50051
+      - INVENTORY_PARTICIPANT_ADDR=twopc-inventory:50051
+      - USERS_PARTICIPANT_ADDR=twopc-users:50051
+    depends_on:
+      - twopc-inventory
+      - twopc-users
+
+  twopc-inventory:
+    build:
+      context: .
+      dockerfile: services/twopc/inventory_participant/Dockerfile
+    container_name: twopc-inventory
+    environment:
+      - PORT=50051
+      - INVENTORY_ADDR=inventory:50051
+    depends_on:
+      - inventory
+
+  twopc-users:
+    build:
+      context: .
+      dockerfile: services/twopc/users_participant/Dockerfile
+    container_name: twopc-users
+    environment:
+      - PORT=50051
+      - USERS_ADDR=users:50051
+    depends_on:
+      - users
