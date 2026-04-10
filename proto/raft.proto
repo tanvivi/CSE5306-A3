@@ -1,0 +1,59 @@
+syntax = "proto3";
+package raft;
+
+// ─────────────────────────────────────────────
+//  Raft gRPC Service  (Q3 + Q4)
+// ─────────────────────────────────────────────
+
+service RaftService {
+  // Q3 – Leader Election
+  rpc RequestVote   (RequestVoteRequest)   returns (RequestVoteResponse);
+  rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
+
+  // Q4 – Log Replication (client-facing)
+  rpc ClientRequest (ClientRequestMessage) returns (ClientRequestResponse);
+}
+
+// ── Q3: RequestVote ──────────────────────────
+message RequestVoteRequest {
+  int32  term           = 1;   // candidate's current term
+  string candidate_id   = 2;   // who is asking
+  int32  last_log_index = 3;   // index of candidate's last log entry
+  int32  last_log_term  = 4;   // term of candidate's last log entry
+}
+
+message RequestVoteResponse {
+  int32 term         = 1;   // responder's current term (so candidate can update)
+  bool  vote_granted = 2;
+}
+
+// ── Q3 + Q4: AppendEntries (heartbeat + log replication) ─────────────────
+message LogEntry {
+  int32  term      = 1;   // term when entry was received by leader
+  int32  index     = 2;   // position in the log
+  string operation = 3;   // the operation string (e.g. "SET x 5")
+}
+
+message AppendEntriesRequest {
+  int32           term          = 1;   // leader's term
+  string          leader_id     = 2;   // so followers can redirect clients
+  repeated LogEntry entries     = 3;   // empty for heartbeat
+  int32           commit_index  = 4;   // leader's commit index  (c in spec)
+}
+
+message AppendEntriesResponse {
+  int32 term    = 1;   // responder's current term
+  bool  success = 2;
+  string node_id = 3;  // responder's node id (for leader ACK tracking)
+}
+
+// ── Q4: Client command ───────────────────────
+message ClientRequestMessage {
+  string operation = 1;   // e.g. "SET x 5"  or  "GET x"
+}
+
+message ClientRequestResponse {
+  bool   success = 1;
+  string result  = 2;   // result of the committed operation
+  string leader_id = 3; // who is the leader (for UI display)
+}

@@ -2,13 +2,23 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy and install gateway requirements
-COPY services/gateway/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir fastapi "uvicorn[standard]" jinja2 python-multipart grpcio==1.76.0 grpcio-tools==1.76.0 protobuf
 
-# Copy shared generated stubs + gateway code
-COPY shared ./shared
-COPY services/gateway ./services/gateway
+COPY proto/ /app/proto/
+COPY shared/ /app/shared/
+
+RUN python -m grpc_tools.protoc \
+    -I /app/proto \
+    --python_out=/app/shared/gen \
+    --grpc_python_out=/app/shared/gen \
+    /app/proto/raft.proto \
+    /app/proto/audit.proto \
+    /app/proto/catalog.proto \
+    /app/proto/circulation.proto \
+    /app/proto/inventory.proto \
+    /app/proto/users.proto
+
+COPY services/gateway/ /app/services/gateway/
 
 ENV PYTHONPATH=/app:/app/shared/gen
 ENV PORT=8080

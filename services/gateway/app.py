@@ -3,6 +3,7 @@
 # calls gRPC and then returns an HTML page with the result
 
 
+import os
 from fastapi import FastAPI, Request, Form
 # Uses FastAPI: REQUEST: gives access to the HTTP request object, FORM: tells FastAPI to read HTML form fields from POST body
 from fastapi.responses import HTMLResponse
@@ -11,8 +12,8 @@ from fastapi.staticfiles import StaticFiles
 # used to serve static CSS files (points to the Folder that has our CSS)
 from fastapi.templating import Jinja2Templates
 # template for HTML pages in the template folder
-from shared.gen import users_pb2, catalog_pb2, inventory_pb2, circulation_pb2, audit_pb2, twopc_pb2
-# combines users_pb2 & catalog_pb2 
+from shared.gen import users_pb2, catalog_pb2, inventory_pb2, circulation_pb2, audit_pb2
+from shared.gen import raft_pb2, raft_pb2_grpc
 import grpc, grpc_clients
 
 # creates the FastAPI app
@@ -265,6 +266,7 @@ def log_page(request: Request, book_id: str | None = None):
         {"request": request, "result": result}
     )
 
+
 # ── 2PC Vote Phase ────────────────────────────────────────────────────────────
 
 @app.get("/2pc", response_class=HTMLResponse)
@@ -302,3 +304,115 @@ def twopc_checkout(
 @app.get("/health")
 def health():
     return {"ok": True}
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Raft Routes  (Q3 + Q4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Known raft node addresses (mirrors docker-compose PEERS)
+RAFT_NODES = [
+    ("raft-node1", os.getenv("RAFT_ADDR", "raft-node1:50060")),
+    ("raft-node2", "raft-node2:50060"),
+    ("raft-node3", "raft-node3:50060"),
+    ("raft-node4", "raft-node4:50060"),
+    ("raft-node5", "raft-node5:50060"),
+]
+
+
+def _raft_stub(addr: str):
+    ch = grpc.insecure_channel(addr)
+    return raft_pb2_grpc.RaftServiceStub(ch), ch
+
+
+def _get_cluster_status():
+    """Probe each raft node via _STATUS_ RPC. Returns list of dicts."""
+    import concurrent.futures as _cf
+
+    def probe(node_id, addr):
+        try:
+            stub, ch = _raft_stub(addr)
+            resp = stub.ClientRequest(
+                raft_pb2.ClientRequestMessage(operation="_STATUS_"),
+                timeout=1,
+            )
+            ch.close()
+            # resp.result = state string ("leader"/"follower"/"candidate")
+            role = resp.result if resp.result in ("leader", "follower", "candidate") else "follower"
+            return {"id": node_id, "role": role, "term": "?"}
+        except Exception:
+            return {"id": node_id, "role": "unknown", "term": "?"}
+
+    with _cf.ThreadPoolExecutor(max_workers=5) as ex:
+        futures = [ex.submit(probe, nid, addr) for nid, addr in RAFT_NODES]
+        return [f.result() for f in futures]
+
+
+def _get_log_from_leader():
+    """Ask each node for its log via a ClientRequest; first success wins."""
+    for _, addr in RAFT_NODES:
+        try:
+            stub, ch = _raft_stub(addr)
+            resp = stub.ClientRequest(
+                raft_pb2.ClientRequestMessage(operation="_LOG_"),
+                timeout=1,
+            )
+            ch.close()
+            if resp.success:
+                # Parse: result is JSON-like "idx:term:op|idx:term:op|..."
+                import json
+                try:
+                    data = json.loads(resp.result)
+                    return data.get("log", []), data.get("commit_index", -1)
+                except Exception:
+                    return [], -1
+        except Exception:
+            pass
+    return [], -1
+
+
+@app.get("/raft", response_class=HTMLResponse)
+def raft_page(request: Request):
+    nodes = _get_cluster_status()
+    log_entries, commit_index = _get_log_from_leader()
+    return templates.TemplateResponse("raft.html", {
+        "request": request,
+        "result": None,
+        "operation": "",
+        "nodes": nodes,
+        "log_entries": log_entries,
+        "commit_index": commit_index,
+    })
+
+
+@app.post("/raft/command", response_class=HTMLResponse)
+async def raft_command(request: Request, operation: str = Form(...)):
+    result = None
+    log_entries, commit_index = [], -1
+
+    # Send to the primary raft node (it will forward if not leader)
+    primary_addr = os.getenv("RAFT_ADDR", "raft-node1:50060")
+    try:
+        stub, ch = _raft_stub(primary_addr)
+        resp = stub.ClientRequest(
+            raft_pb2.ClientRequestMessage(operation=operation),
+            timeout=5,
+        )
+        ch.close()
+        result = {
+            "success": resp.success,
+            "result": resp.result,
+            "leader_id": resp.leader_id,
+        }
+        log_entries, commit_index = _get_log_from_leader()
+    except grpc.RpcError as e:
+        result = {"success": False, "result": f"gRPC error: {e.details()}", "leader_id": ""}
+
+    nodes = _get_cluster_status()
+    return templates.TemplateResponse("raft.html", {
+        "request": request,
+        "result": result,
+        "operation": operation,
+        "nodes": nodes,
+        "log_entries": log_entries,
+        "commit_index": commit_index,
+    })

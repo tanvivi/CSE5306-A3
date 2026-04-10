@@ -1,9 +1,9 @@
 version: "3.9"
-# the (.) signifies the repo root, so we point each service to the root context
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Original Library Services
+# ─────────────────────────────────────────────────────────────────────────────
 services:
-
-  # ── Original library services (unchanged) ───────────────────────────────────
-
   gateway:
     build:
       context: .
@@ -16,7 +16,9 @@ services:
       - INVENTORY_ADDR=inventory:50051
       - CIRCULATION_ADDR=circulation:50051
       - AUDIT_ADDR=audit:50051
-      - TWOPC_COORDINATOR_ADDR=twopc-coordinator:50051
+      # Raft: gateway talks to raft-node1 for client commands
+      - RAFT_ADDR=raft-node1:50060
+      # - TWOPC_COORDINATOR_ADDR=twopc-coordinator:50051
     ports:
       - "8080:8080"
     depends_on:
@@ -25,12 +27,13 @@ services:
       - inventory
       - circulation
       - audit
-      - twopc-coordinator
+      - raft-node1
+      # - twopc-coordinator
 
   users:
     build:
       context: .
-      dockerfile: services/users/Dockerfile
+      dockerfile: services/users/dockerfile
     container_name: library-users
     environment:
       - PORT=50051
@@ -38,7 +41,7 @@ services:
   catalog:
     build:
       context: .
-      dockerfile: services/catalog/Dockerfile
+      dockerfile: services/catalog/dockerfile
     container_name: library-catalog
     environment:
       - PORT=50051
@@ -46,7 +49,7 @@ services:
   inventory:
     build:
       context: .
-      dockerfile: services/inventory/Dockerfile
+      dockerfile: services/inventory/dockerfile
     container_name: library-inventory
     environment:
       - PORT=50051
@@ -54,7 +57,7 @@ services:
   circulation:
     build:
       context: .
-      dockerfile: services/circulation/Dockerfile
+      dockerfile: services/circulation/dockerfile
     container_name: library-circulation
     environment:
       - PORT=50051
@@ -62,44 +65,108 @@ services:
   audit:
     build:
       context: .
-      dockerfile: services/audit/Dockerfile
+      dockerfile: services/audit/dockerfile
     container_name: library-audit
     environment:
       - PORT=50051
 
-  # ── 2PC nodes ────────────────────────────────────────────────────────────────
+# # ─────────────────────────────────────────────────────────────────────────────
+# #  2PC nodes
+# # ─────────────────────────────────────────────────────────────────────────────
+#   twopc-coordinator:
+#     build:
+#       context: .
+#       dockerfile: services/twopc/coordinator/Dockerfile
+#     container_name: twopc-coordinator
+#     environment:
+#       - PORT=50051
+#       - INVENTORY_PARTICIPANT_ADDR=twopc-inventory:50051
+#       - USERS_PARTICIPANT_ADDR=twopc-users:50051
+#     depends_on:
+#       - twopc-inventory
+#       - twopc-users
 
-  twopc-coordinator:
+#   twopc-inventory:
+#     build:
+#       context: .
+#       dockerfile: services/twopc/inventory_participant/Dockerfile
+#     container_name: twopc-inventory
+#     environment:
+#       - PORT=50051
+#       - INVENTORY_ADDR=inventory:50051
+#     depends_on:
+#       - inventory
+
+  # twopc-users:
+  #   build:
+  #     context: .
+  #     dockerfile: services/twopc/users_participant/Dockerfile
+  #   container_name: twopc-users
+  #   environment:
+  #     - PORT=50051
+  #     - USERS_ADDR=users:50051
+  #   depends_on:
+  #     - users
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Raft Cluster  (5 nodes, Q3 + Q4)
+# ─────────────────────────────────────────────────────────────────────────────
+  raft-node1:
     build:
       context: .
-      dockerfile: services/twopc/coordinator/Dockerfile
-    container_name: twopc-coordinator
+      dockerfile: services/raft/Dockerfile
+    container_name: raft-node1
+    ports:
+      - "50061:50060"
     environment:
-      - PORT=50051
-      - INVENTORY_PARTICIPANT_ADDR=twopc-inventory:50051
-      - USERS_PARTICIPANT_ADDR=twopc-users:50051
-    depends_on:
-      - twopc-inventory
-      - twopc-users
+      - NODE_ID=raft-node1
+      - PORT=50060
+      - PEERS=raft-node2:50060,raft-node3:50060,raft-node4:50060,raft-node5:50060
 
-  twopc-inventory:
+  raft-node2:
     build:
       context: .
-      dockerfile: services/twopc/inventory_participant/Dockerfile
-    container_name: twopc-inventory
+      dockerfile: services/raft/Dockerfile
+    container_name: raft-node2
+    ports:
+      - "50062:50060"
     environment:
-      - PORT=50051
-      - INVENTORY_ADDR=inventory:50051
-    depends_on:
-      - inventory
+      - NODE_ID=raft-node2
+      - PORT=50060
+      - PEERS=raft-node1:50060,raft-node3:50060,raft-node4:50060,raft-node5:50060
 
-  twopc-users:
+  raft-node3:
     build:
       context: .
-      dockerfile: services/twopc/users_participant/Dockerfile
-    container_name: twopc-users
+      dockerfile: services/raft/Dockerfile
+    container_name: raft-node3
+    ports:
+      - "50063:50060"
     environment:
-      - PORT=50051
-      - USERS_ADDR=users:50051
-    depends_on:
-      - users
+      - NODE_ID=raft-node3
+      - PORT=50060
+      - PEERS=raft-node1:50060,raft-node2:50060,raft-node4:50060,raft-node5:50060
+
+  raft-node4:
+    build:
+      context: .
+      dockerfile: services/raft/Dockerfile
+    container_name: raft-node4
+    ports:
+      - "50064:50060"
+    environment:
+      - NODE_ID=raft-node4
+      - PORT=50060
+      - PEERS=raft-node1:50060,raft-node2:50060,raft-node3:50060,raft-node5:50060
+
+  raft-node5:
+    build:
+      context: .
+      dockerfile: services/raft/Dockerfile
+    container_name: raft-node5
+    ports:
+      - "50065:50060"
+    environment:
+      - NODE_ID=raft-node5
+      - PORT=50060
+      - PEERS=raft-node1:50060,raft-node2:50060,raft-node3:50060,raft-node4:50060
