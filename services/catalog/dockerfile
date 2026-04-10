@@ -3,9 +3,14 @@ FROM python:3.11-slim
 WORKDIR /app
 
 COPY services/catalog/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt grpcio-tools==1.76.0
 
+# Copy shared generated protobuf files
 COPY shared ./shared
+
+COPY proto/raft.proto /app/proto/raft.proto
+RUN python -m grpc_tools.protoc -I /app/proto --python_out=/app/shared/gen --grpc_python_out=/app/shared/gen /app/proto/raft.proto
+
 COPY services/catalog ./services/catalog
 
 ENV PYTHONPATH=/app:/app/shared/gen
@@ -14,4 +19,5 @@ ENV PORT=50051
 WORKDIR /app/services/catalog
 EXPOSE 50051
 
+ENV RAFT_ADDR=raft-node1:50060
 CMD ["python", "app.py"]
