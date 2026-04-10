@@ -4,10 +4,12 @@ WORKDIR /app
 
 # Install dependencies
 COPY services/users/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
-
+RUN pip install --no-cache-dir -r requirements.txt grpcio-tools==1.76.0
 # Copy shared generated protobuf files
 COPY shared ./shared
+
+COPY proto/raft.proto /app/proto/raft.proto
+RUN python -m grpc_tools.protoc -I /app/proto --python_out=/app/shared/gen --grpc_python_out=/app/shared/gen /app/proto/raft.proto
 
 # Copy services code
 COPY services/users ./services/users
@@ -19,4 +21,5 @@ ENV PORT=50051
 WORKDIR /app/services/users
 EXPOSE 50051
 
+ENV RAFT_ADDR=raft-node1:50060
 CMD ["python", "app.py"]

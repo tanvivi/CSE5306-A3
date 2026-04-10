@@ -508,7 +508,7 @@ def tc3_follower_crash():
     # ── 4. Unpause follower and wait for catch-up ────────────────────────────
     section("Step 4 – unpause follower and wait for log catch-up")
     unpause_container(victim)
-    time.sleep(8)   # ≥ 1 heartbeat cycle
+    time.sleep(15)   # ≥ 1 heartbeat cycle
 
     _, ci_victim = get_log(victim)
     info(f"Victim commit index after rejoin: {ci_victim}")
