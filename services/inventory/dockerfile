@@ -3,7 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 COPY services/inventory/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt grpcio-tools==1.76.0
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy shared generated protobuf files
 COPY shared ./shared

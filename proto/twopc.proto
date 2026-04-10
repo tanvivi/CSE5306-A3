@@ -1,0 +1,79 @@
+syntax = "proto3";
+package twopc;
+
+enum Vote {
+  VOTE_COMMIT = 0;
+  VOTE_ABORT  = 1;
+}
+
+// ── Vote phase ────────────────────────────────────────────────────────────────
+
+message VoteRequest {
+  string transaction_id = 1;
+  string operation      = 2;
+  string book_id        = 3;
+  string user_id        = 4;
+}
+
+message VoteResponse {
+  string transaction_id = 1;
+  string participant_id = 2;
+  Vote   vote           = 3;
+  string reason         = 4;
+}
+
+// ── Decision phase ────────────────────────────────────────────────────────────
+
+message DecisionRequest {
+  string transaction_id = 1;
+  string operation      = 2;
+  string book_id        = 3;
+  string user_id        = 4;
+}
+
+message AckResponse {
+  string transaction_id = 1;
+  string participant_id = 2;
+  bool   ok             = 3;
+  string message        = 4;
+}
+
+// ── Gateway ↔ Coordinator ─────────────────────────────────────────────────────
+
+message BeginRequest {
+  string operation = 1;
+  string book_id   = 2;
+  string user_id   = 3;
+}
+
+message VoteResult {
+  string participant = 1;
+  bool   committed   = 2;
+  string reason      = 3;
+}
+
+message AckResult {
+  string participant = 1;
+  bool   ok          = 2;
+  string message     = 3;
+}
+
+message BeginResponse {
+  string              transaction_id = 1;
+  bool                all_commit     = 2;
+  repeated VoteResult votes          = 3;
+  repeated AckResult  acks           = 4;
+  string              summary        = 5;
+}
+
+// ── Services ──────────────────────────────────────────────────────────────────
+
+service CoordinatorService {
+  rpc BeginTransaction (BeginRequest) returns (BeginResponse);
+}
+
+service ParticipantService {
+  rpc RequestVote (VoteRequest)     returns (VoteResponse);  // vote phase
+  rpc Commit      (DecisionRequest) returns (AckResponse);   // decision phase
+  rpc Abort       (DecisionRequest) returns (AckResponse);   // decision phase
+}
