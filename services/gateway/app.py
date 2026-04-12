@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 # template for HTML pages in the template folder
 from shared.gen import users_pb2, catalog_pb2, inventory_pb2, circulation_pb2, audit_pb2
 from shared.gen import raft_pb2, raft_pb2_grpc
+from shared.gen import twopc_pb2
 import grpc, grpc_clients
 
 # creates the FastAPI app
@@ -281,12 +282,12 @@ def log_page(request: Request, book_id: str | None = None):
         )
         result = {"ok": res.ok, "message": res.message}
 
+
     return templates.TemplateResponse(request, "audit.html", {"result": result})
 
-
-# @app.get("/2pc", response_class=HTMLResponse)
-# def twopc_page(request: Request):
-#     return templates.TemplateResponse(request, "twopc.html", {"result": None})
+@app.get("/2pc", response_class=HTMLResponse)
+def twopc_page(request: Request):
+    return templates.TemplateResponse(request, "twopc.html", {"result": None})
 
 
 @app.post("/2pc/checkout", response_class=HTMLResponse)
@@ -302,6 +303,10 @@ def twopc_checkout(request: Request, book_id: str = Form(...), user_id: str = Fo
         "votes": [
             {"participant": v.participant, "committed": v.committed, "reason": v.reason}
             for v in res.votes
+        ],
+        "acks": [
+            {"participant": a.participant, "ok": a.ok, "message": a.message}
+            for a in res.acks
         ],
     }
 

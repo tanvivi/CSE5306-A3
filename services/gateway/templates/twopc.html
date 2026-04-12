@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>2PC - Library System</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+        .vote-commit { color: green; font-weight: bold; }
+        .vote-abort  { color: red;   font-weight: bold; }
+        .ack-ok      { color: green; }
+        .ack-fail    { color: red;   }
+        .result-commit { background: #e6ffe6; border: 1px solid green; padding: 10px; border-radius: 4px; margin: 10px 0; }
+        .result-abort  { background: #ffe6e6; border: 1px solid red;   padding: 10px; border-radius: 4px; margin: 10px 0; }
+        table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+        th, td { border: 1px solid #ccc; padding: 8px 12px; text-align: left; }
+        th { background: #f4f4f4; }
+        h3 { margin-top: 20px; margin-bottom: 4px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>2-Phase Commit</h1>
+
+    <h2>Start a Transaction</h2>
+    <form method="post" action="/2pc/checkout">
+        <label>User ID:</label>
+        <input type="text" name="user_id" required />
+        <label>Book ID:</label>
+        <input type="text" name="book_id" required />
+        <button type="submit">Begin Transaction</button>
+    </form>
+
+    {% if result %}
+    <hr/>
+    <h2>Transaction {{ result.transaction_id }}</h2>
+    <div class="{{ 'result-commit' if result.all_commit else 'result-abort' }}">
+        <strong>{{ result.summary }}</strong>
+    </div>
+
+    <h3>Phase 1 — Vote</h3>
+    <table>
+        <tr><th>Participant</th><th>Vote</th><th>Reason</th></tr>
+        {% for v in result.votes %}
+        <tr>
+            <td>{{ v.participant }}</td>
+            <td class="{{ 'vote-commit' if v.committed else 'vote-abort' }}">
+                {{ "COMMIT" if v.committed else "ABORT" }}
+            </td>
+            <td>{{ v.reason }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <h3>Phase 2 — Decision ({{ "Commit" if result.all_commit else "Abort" }})</h3>
+    <table>
+        <tr><th>Participant</th><th>Status</th><th>Message</th></tr>
+        {% for a in result.acks %}
+        <tr>
+            <td>{{ a.participant }}</td>
+            <td class="{{ 'ack-ok' if a.ok else 'ack-fail' }}">
+                {{ "OK" if a.ok else "FAIL" }}
+            </td>
+            <td>{{ a.message }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% endif %}
+
+    <a class="back" href="/">Back to Home</a>
+</div>
+</body>
+</html>
