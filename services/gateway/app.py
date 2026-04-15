@@ -32,7 +32,10 @@ logNum = 0
 
 # ── Raft helper stubs ────────────────────────────────────────────────────────
 
-RAFT_NODES = [
+# Static seed nodes used as the starting point for cluster discovery.
+# The gateway will call _MEMBERS_ on any reachable seed to learn about
+# dynamically-added nodes (e.g. raft-node6 in TC1).
+_SEED_NODES = [
     ("raft-node1", "raft-node1:50060"),
     ("raft-node2", "raft-node2:50060"),
     ("raft-node3", "raft-node3:50060"),
@@ -44,8 +47,29 @@ def _raft_stub(addr: str):
     ch = grpc.insecure_channel(addr)
     return raft_pb2_grpc.RaftServiceStub(ch), ch
 
+def _discover_raft_nodes() -> list[tuple[str, str]]:
+    """Ask any reachable seed for the full membership list via _MEMBERS_.
+    Falls back to the static seed list if discovery fails."""
+    import json
+    for _, addr in _SEED_NODES:
+        try:
+            stub, ch = _raft_stub(addr)
+            resp = stub.ClientRequest(
+                raft_pb2.ClientRequestMessage(operation="_MEMBERS_"),
+                timeout=1,
+            )
+            ch.close()
+            if resp.success:
+                members: dict[str, str] = json.loads(resp.result)
+                # members is {node_id: "host:port"}
+                return sorted(members.items())   # deterministic order
+        except Exception:
+            pass
+    return _SEED_NODES   # fallback
+
 def _get_cluster_status():
     import concurrent.futures as _cf
+    nodes = _discover_raft_nodes()
     def probe(node_id, addr):
         try:
             stub, ch = _raft_stub(addr)
@@ -58,13 +82,13 @@ def _get_cluster_status():
             return {"id": node_id, "role": role, "term": "?"}
         except Exception:
             return {"id": node_id, "role": "unknown", "term": "?"}
-    with _cf.ThreadPoolExecutor(max_workers=5) as ex:
-        futures = [ex.submit(probe, nid, addr) for nid, addr in RAFT_NODES]
+    with _cf.ThreadPoolExecutor(max_workers=max(len(nodes), 1)) as ex:
+        futures = [ex.submit(probe, nid, addr) for nid, addr in nodes]
         return [f.result() for f in futures]
 
 def _get_log_from_leader():
     import json
-    for _, addr in RAFT_NODES:
+    for _, addr in _discover_raft_nodes():
         try:
             stub, ch = _raft_stub(addr)
             resp = stub.ClientRequest(
@@ -78,6 +102,37 @@ def _get_log_from_leader():
         except Exception:
             pass
     return [], -1
+
+
+def _get_all_node_logs() -> list[dict]:
+    """Return per-node log info: [{node_id, log, commit_index, reachable}]."""
+    import json, concurrent.futures as _cf
+
+    nodes = _discover_raft_nodes()
+
+    def fetch(node_id, addr):
+        try:
+            stub, ch = _raft_stub(addr)
+            resp = stub.ClientRequest(
+                raft_pb2.ClientRequestMessage(operation="_LOG_"),
+                timeout=1,
+            )
+            ch.close()
+            if resp.success:
+                data = json.loads(resp.result)
+                return {
+                    "node_id": node_id,
+                    "log": data.get("log", []),
+                    "commit_index": data.get("commit_index", -1),
+                    "reachable": True,
+                }
+        except Exception:
+            pass
+        return {"node_id": node_id, "log": [], "commit_index": -1, "reachable": False}
+
+    with _cf.ThreadPoolExecutor(max_workers=max(len(nodes), 1)) as ex:
+        futures = [ex.submit(fetch, nid, addr) for nid, addr in nodes]
+        return [f.result() for f in futures]
 
 # Page routes ========================================================
 # - Get: to read data. (reads HTML response)
@@ -317,6 +372,7 @@ def twopc_checkout(request: Request, book_id: str = Form(...), user_id: str = Fo
 def raft_page(request: Request):
     nodes = _get_cluster_status()
     log_entries, commit_index = _get_log_from_leader()
+    node_logs = _get_all_node_logs()
 
     return templates.TemplateResponse(request, "raft.html", {
         "result": None,
@@ -324,6 +380,7 @@ def raft_page(request: Request):
         "nodes": nodes,
         "log_entries": log_entries,
         "commit_index": commit_index,
+        "node_logs": node_logs,
     })
 
 
@@ -353,6 +410,7 @@ async def raft_command(request: Request, operation: str = Form(...)):
         result = {"success": False, "result": f"gRPC error: {e.details()}", "leader_id": ""}
 
     nodes = _get_cluster_status()
+    node_logs = _get_all_node_logs()
 
     return templates.TemplateResponse(request, "raft.html", {
         "result": result,
@@ -360,4 +418,5 @@ async def raft_command(request: Request, operation: str = Form(...)):
         "nodes": nodes,
         "log_entries": log_entries,
         "commit_index": commit_index,
+        "node_logs": node_logs,
     })

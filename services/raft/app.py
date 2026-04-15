@@ -26,6 +26,10 @@ PORT      = int(os.getenv("PORT", "50060"))
 PEERS_ENV = os.getenv("PEERS", "")
 PEERS: list[str] = [p.strip() for p in PEERS_ENV.split(",") if p.strip()]
 
+# Dynamically registered nodes that are NOT in the static PEERS list
+# (e.g. raft-node6 started by TC1).  node_id -> "host:port"
+registered_members: dict[str, str] = {}
+
 HEARTBEAT_INTERVAL = 1.0          # seconds – leader sends HB every 1 s
 ELECTION_TIMEOUT   = random.uniform(1.5, 3.0)   # seconds – unique per node
 
@@ -220,6 +224,31 @@ class RaftServicer(raft_pb2_grpc.RaftServiceServicer):
                 leader_id=leader_id or NODE_ID,
             )
 
+        # ── Dynamic member registration (new nodes announce themselves) ──────
+        if op.startswith("_REGISTER_ "):
+            parts = op.split()
+            if len(parts) == 3:
+                reg_id, reg_addr = parts[1], parts[2]
+                with lock:
+                    registered_members[reg_id] = reg_addr
+                print(f"[{NODE_ID}] registered new member {reg_id} @ {reg_addr}", flush=True)
+            return raft_pb2.ClientRequestResponse(
+                success=True, result="OK", leader_id=leader_id or "")
+
+        # ── Return all known cluster members (used by gateway for discovery) ──
+        if op == "_MEMBERS_":
+            with lock:
+                members: dict[str, str] = {NODE_ID: f"{NODE_ID}:{PORT}"}
+                for peer in PEERS:
+                    nid = peer.split(":")[0]
+                    members[nid] = peer
+                members.update(registered_members)
+            return raft_pb2.ClientRequestResponse(
+                success=True,
+                result=_json.dumps(members),
+                leader_id=leader_id or "",
+            )
+
         print(f"Node {NODE_ID} runs RPC ClientRequest called by client  "
               f"op=\'{op}\'", flush=True)
 
@@ -271,7 +300,8 @@ class RaftServicer(raft_pb2_grpc.RaftServiceServicer):
             except Exception as exc:
                 print(f"[{NODE_ID}] replicate to {peer} failed: {exc}", flush=True)
 
-        threads = [threading.Thread(target=replicate, args=(p,), daemon=True) for p in PEERS]
+        all_peers = list(dict.fromkeys(list(PEERS) + list(registered_members.values())))
+        threads = [threading.Thread(target=replicate, args=(p,), daemon=True) for p in all_peers]
         for t in threads:
             t.start()
         for t in threads:
@@ -309,6 +339,9 @@ def _forward_to_leader(operation: str) -> raft_pb2.ClientRequestResponse:
         if p.startswith(leader_id + ":") or p == leader_id:
             target_peer = p
             break
+    # Also check dynamically registered nodes (e.g. raft-node6)
+    if not target_peer and leader_id in registered_members:
+        target_peer = registered_members[leader_id]
     if not target_peer:
         return raft_pb2.ClientRequestResponse(
             success=False,
@@ -452,7 +485,8 @@ def _send_heartbeats():
         except Exception as exc:
             print(f"[{NODE_ID}] heartbeat to {peer} failed: {exc}", flush=True)
 
-    threads = [threading.Thread(target=hb_to, args=(p,), daemon=True) for p in PEERS]
+    all_peers = list(dict.fromkeys(list(PEERS) + list(registered_members.values())))
+    threads = [threading.Thread(target=hb_to, args=(p,), daemon=True) for p in all_peers]
     for t in threads:
         t.start()
     for t in threads:
@@ -553,12 +587,25 @@ def _bootstrap_from_peers():
                 f"log_len={len(log)}  commit_index={commit_index}  leader={leader_id}",
                 flush=True,
             )
-            return   # success — stop after first peer that has data
+            break   # stop after first peer that has data
 
         except Exception as exc:
             print(f"[{NODE_ID}] bootstrap from {peer} failed: {exc}", flush=True)
 
-    print(f"[{NODE_ID}] bootstrap: no peer had log data, starting fresh", flush=True)
+    # Announce this node to every peer so they add us to their registered_members.
+    # This lets the gateway discover us via _MEMBERS_ even though we are not in
+    # any existing node's static PEERS list.
+    reg_op = f"_REGISTER_ {NODE_ID} {NODE_ID}:{PORT}"
+    for peer in PEERS:
+        try:
+            stub, ch = _stub(peer)
+            stub.ClientRequest(
+                raft_pb2.ClientRequestMessage(operation=reg_op), timeout=1)
+            ch.close()
+        except Exception:
+            pass
+
+    print(f"[{NODE_ID}] bootstrap: announced self to peers", flush=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Entry point

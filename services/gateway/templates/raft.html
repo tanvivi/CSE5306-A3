@@ -197,6 +197,55 @@
     .log-op    { color: var(--text); }
     .log-op.committed { color: var(--green); }
     .log-empty { color: var(--muted); font-size: 0.8rem; }
+
+    /* Per-node logs */
+    .node-logs-grid {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 16px;
+    }
+    .node-log-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .node-log-card.unreachable {
+      opacity: 0.45;
+      border-color: var(--red);
+    }
+    .node-log-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .node-log-title .name {
+      font-size: 0.78rem;
+      font-weight: 700;
+      flex: 1;
+    }
+    .node-log-title .ci-badge {
+      font-size: 0.65rem;
+      padding: 2px 7px;
+      border-radius: 20px;
+      background: rgba(94,174,255,.12);
+      color: var(--blue);
+    }
+    .node-log-title .unreachable-badge {
+      font-size: 0.65rem;
+      padding: 2px 7px;
+      border-radius: 20px;
+      background: rgba(255,107,107,.12);
+      color: var(--red);
+    }
+    .node-log-entries {
+      font-size: 0.75rem;
+      line-height: 1.65;
+      max-height: 180px;
+      overflow-y: auto;
+    }
   </style>
 </head>
 <body>
@@ -258,27 +307,38 @@
     </div>
   </div>
 
-  <!-- Replicated log -->
-  <div class="card log-panel">
-    <h2>Replicated Log  <span style="color:var(--muted);font-weight:400">(leader's view · green = committed)</span></h2>
-    <div class="log-entries">
-      {% if log_entries %}
-        <div class="log-entry" style="color:var(--muted);font-size:.7rem;font-weight:700">
-          <span>IDX</span><span>TERM</span><span>OPERATION</span>
-        </div>
-        {% for e in log_entries %}
-        <div class="log-entry">
-          <span class="log-idx">{{ e.index }}</span>
-          <span class="log-term">t{{ e.term }}</span>
-          <span class="log-op {{ 'committed' if e.index <= commit_index else '' }}">
-            {{ e.operation }}
-          </span>
-        </div>
-        {% endfor %}
-      {% else %}
-        <div class="log-empty">No log entries yet. Send a command above.</div>
-      {% endif %}
+  <!-- Per-node logs -->
+  <div class="node-logs-grid">
+    {% for nl in node_logs %}
+    <div class="node-log-card {{ '' if nl.reachable else 'unreachable' }}">
+      <div class="node-log-title">
+        <span class="name">{{ nl.node_id }}</span>
+        {% if nl.reachable %}
+          <span class="ci-badge">commit {{ nl.commit_index }}</span>
+        {% else %}
+          <span class="unreachable-badge">unreachable</span>
+        {% endif %}
+      </div>
+      <div class="node-log-entries">
+        {% if nl.log %}
+          <div class="log-entry" style="color:var(--muted);font-size:.68rem;font-weight:700">
+            <span>IDX</span><span>TERM</span><span>OPERATION</span>
+          </div>
+          {% for e in nl.log %}
+          <div class="log-entry">
+            <span class="log-idx">{{ e.index }}</span>
+            <span class="log-term">t{{ e.term }}</span>
+            <span class="log-op {{ 'committed' if e.index <= nl.commit_index else '' }}">
+              {{ e.operation }}
+            </span>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="log-empty">{{ 'empty log' if nl.reachable else 'node down' }}</div>
+        {% endif %}
+      </div>
     </div>
+    {% endfor %}
   </div>
 
 </div>

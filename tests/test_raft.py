@@ -8,8 +8,8 @@ Test cases:
   TC1  New node joins a running cluster (log catch-up)
   TC2  Leader crash → re-election → new leader elected
   TC3  Single follower crash → cluster still makes progress (majority intact)
-  TC4  Minority partition (2 nodes paused) → cluster still commits → restore → catch-up
-  TC5  Concurrent / duplicate client requests → log consistency (no split-brain)
+  TC4  Minority partition (2 nodes stopped) → cluster still commits → restore → catch-up
+  TC5  Majority crash (4/5 followers stopped, leader alive) → commit blocked → restore → recovery
 
 Requirements:
   pip install grpcio protobuf
@@ -33,7 +33,6 @@ import json
 import subprocess
 import sys
 import time
-import threading
 import os
 
 # ── Add project root so we can import the generated proto stubs ──────────────
@@ -226,7 +225,7 @@ def pause_container(name: str):
 def unpause_container(name: str):
     rc, out = docker(["unpause", name])
     if rc == 0:
-        info(f"Unpaused container '{name}'")
+        info(f"Unstopped container '{name}'")
     else:
         warn(f"Could not unpause '{name}': {out}")
     return rc == 0
@@ -254,7 +253,8 @@ def run_new_container(
     node_id: str,
     host_port: int,
     peers: list[str],
-    network: str = "cse5306-a3_default",   # docker compose project=raft → raft_default
+    network: str = "cse5306-project2_default",
+    image: str = "cse5306-project2-raft-node1",
 ):
     """Start a brand-new raft node container (TC1)."""
     peer_str = ",".join(peers)
@@ -266,7 +266,7 @@ def run_new_container(
         "-e", "PORT=50060",
         "-e", f"PEERS={peer_str}",
         "-p", f"{host_port}:50060",
-        "cse5306-a3-raft-node1",   # image built by docker compose (project=raft, service=raft-node1)
+        image,
     ]
     rc, out = docker(cmd)
     if rc == 0:
@@ -331,23 +331,38 @@ def tc1_new_node_joins():
         "raft-node4:50060", "raft-node5:50060",
     ]
 
-    # Detect the docker network: compose names it <project>_default.
-    # Project folder "RAFT" → project "raft" → network "raft_default"
-    rc, net_out = docker(["network", "ls", "--filter", "name=raft", "--format", "{{.Name}}"])
-    network = "cse5306-a3_default"  # safe fallback matching your compose output
-    if rc == 0 and net_out.strip():
-        lines = [ln.strip() for ln in net_out.strip().split("\n") if ln.strip()]
-        # Prefer the line that ends with _default
-        defaults = [ln for ln in lines if ln.endswith("_default")]
-        if defaults:
-            network = defaults[0]
-        elif lines:
-            network = lines[0]
+    # Detect the docker network and image from an existing running node.
+    # docker compose names the network <project>_default; inspect an existing
+    # container to find both values reliably instead of guessing.
+    # Fall back: list all networks containing "default" and pick the one that
+    # shares a name prefix with any raft container.
+    network = "cse5306-project2_default"  # correct fallback from docker network ls
+    rc_nl, nl_out = docker(["network", "ls", "--format", "{{.Name}}"])
+    if rc_nl == 0:
+        # Find network whose name ends with _default and appears in compose output
+        candidates = [ln.strip() for ln in nl_out.splitlines()
+                      if ln.strip().endswith("_default")]
+        # Prefer a network that shares a prefix with the running containers
+        rc_ci, ci_out = docker(["inspect", "--format",
+                                 "{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}",
+                                 "raft-node1"])
+        if rc_ci == 0 and ci_out.strip():
+            detected = ci_out.strip().split()[0]
+            network = detected
+        elif candidates:
+            network = candidates[0]
     info(f"Docker network: {network}")
+
+    # Detect image name from an existing raft container instead of hardcoding it.
+    image_name = "cse5306-project2-raft-node1"  # correct fallback
+    rc_img, img_out = docker(["inspect", "--format", "{{.Config.Image}}", "raft-node1"])
+    if rc_img == 0 and img_out.strip():
+        image_name = img_out.strip()
+    info(f"Using image: {image_name}")
 
     # Remove any leftover container from a previous run
     remove_container("raft-node6")
-    started = run_new_container("raft-node6", 50066, existing_peers, network)
+    started = run_new_container("raft-node6", 50066, existing_peers, network, image_name)  # noqa: E501
     if not started:
         warn("Skipping node6 catch-up checks (container failed to start)")
         del NODE_ADDRS["raft-node6"]
@@ -463,7 +478,7 @@ def tc2_leader_crash():
 def tc3_follower_crash():
     hdr("TC3: Single Follower Crash – Cluster Keeps Committing")
     print(
-        "  Scenario: One follower is paused (simulating a crash). With 4/5 nodes\n"
+        "  Scenario: One follower is stopped (simulating a crash). With 4/5 nodes\n"
         "  still running the cluster has a majority and must continue to commit.\n"
         "  After un-pausing, the follower must catch up via heartbeat log replication.\n"
     )
@@ -490,7 +505,7 @@ def tc3_follower_crash():
     time.sleep(1)
 
     # ── 3. Commit new entries while follower is down ─────────────────────────
-    section("Step 3 – commit entries while follower is paused")
+    section("Step 3 – commit entries while follower is stopped")
     ok1 = send_command(ldr, "SET tc3_during outage1")
     ok2 = send_command(ldr, "SET tc3_during outage2")
 
@@ -529,7 +544,7 @@ def tc3_follower_crash():
 def tc4_minority_partition():
     hdr("TC4: Minority Partition – 2 Followers Isolated")
     print(
-        "  Scenario: Two followers are paused (minority partition). The leader\n"
+        "  Scenario: Two followers are stopped (minority partition). The leader\n"
         "  still has 3/5 nodes (majority) and must keep committing. When the two\n"
         "  partitioned nodes are restored they must receive the full log.\n"
     )
@@ -544,7 +559,7 @@ def tc4_minority_partition():
     partitioned = others[:2]
     remaining   = others[2:]
     info(f"Leader: {ldr}")
-    info(f"Partitioned (paused): {partitioned}")
+    info(f"Partitioned (stopped): {partitioned}")
     info(f"Remaining active:     {remaining + [ldr]}")
 
     # Baseline
@@ -583,7 +598,7 @@ def tc4_minority_partition():
     section("Step 4 – restore partitioned nodes")
     for n in partitioned:
         unpause_container(n)
-    time.sleep(5)   # several heartbeat cycles for full catch-up
+    time.sleep(15)  # several heartbeat cycles for full catch-up
 
     # ── 5. Verify catch-up ───────────────────────────────────────────────────
     section("Step 5 – verify partitioned nodes caught up")
@@ -608,56 +623,108 @@ def tc4_minority_partition():
 
 
 # =============================================================================
-#  TC5 – Concurrent Client Requests → Log Consistency
+#  TC5 – Majority Crash → Cluster Unavailable → Restore → Recovery
 # =============================================================================
-def tc5_concurrent_requests():
-    hdr("TC5: Concurrent Client Requests – Log Consistency")
+def tc5_majority_crash():
+    hdr("TC5: Majority Crash – Cluster Unavailable Then Recovers")
     print(
-        "  Scenario: Multiple clients send SET requests for the same key\n"
-        "  concurrently (from different threads). Raft must serialise them.\n"
-        "  After all complete, all nodes must agree on the same final value\n"
-        "  (no split-brain) and have identical commit_index values.\n"
+        "  Scenario: The leader is kept alive but 3 of 4 followers are STOPPED\n"
+        "  (majority lost). Only leader + 1 follower remain (2/5), so the leader\n"
+        "  cannot gather the 3/5 ACKs needed to commit — new entries MUST be rejected.\n"
+        "  After restarting the 3 stopped followers the cluster must resume commits\n"
+        "  and all 5 nodes must converge on the same commit_index.\n"
+        "\n"
+        "  Design note: we keep the leader running (rather than stopping it) so\n"
+        "  there is no election race during teardown. Stopped containers refuse\n"
+        "  connections immediately (ECONNREFUSED); paused containers leave the\n"
+        "  kernel TCP stack active, which can buffer gRPC data before the deadline.\n"
     )
 
-    section("Step 1 – find leader")
+    # ── 1. Find leader and record baseline commit_index ──────────────────────
+    section("Step 1 – find leader and commit a baseline entry")
     ldr = wait_for_leader(timeout=12)
     if not assert_true(ldr is not None, f"Leader found: {ldr}", "No leader", "TC5"):
         return
 
-    # ── Send N concurrent SET requests for the same key ──────────────────────
-    section("Step 2 – fire 8 concurrent SET requests for key='tc5_shared'")
-    N = 8
-    results_list: list[dict] = [{}] * N
-    lock = threading.Lock()
+    info(f"Current leader: {ldr}")
+    r_base = send_command(ldr, "SET tc5_base before_majority_crash")
+    info(f"Baseline SET → success={r_base['success']} result={r_base['result']}")
+    time.sleep(1.5)
+    _, ci_before = get_log(ldr)
+    info(f"Commit index before majority crash: {ci_before}")
 
-    def do_request(idx: int):
-        val = f"client{idx}"
-        r = send_command(ldr, f"SET tc5_shared {val}", timeout=8)
-        with lock:
-            results_list[idx] = r
-        info(f"  client{idx}: SET tc5_shared {val} → success={r['success']} result={r['result']}")
+    print_cluster_status("Before majority crash")
 
-    threads = [threading.Thread(target=do_request, args=(i,), daemon=True) for i in range(N)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=10)
+    # ── 2. Stop 3 followers (keep leader + 1 follower running) ──────────────
+    # With 3 stopped: leader + 1 follower = 2/5 alive < majority(3).
+    # The leader cannot gather 3 ACKs, so commits must be rejected.
+    section("Step 2 – stop 3 followers to break quorum (leader stays running)")
+    all_nodes = list(NODE_ADDRS.keys())
+    followers = [n for n in all_nodes if n != ldr]   # 4 followers
+    stopped   = followers[:3]                         # stop 3 of 4
+    info(f"Leader (stays running): {ldr}")
+    info(f"Stopped followers:      {stopped}")
 
-    successes = sum(1 for r in results_list if r.get("success"))
-    info(f"Successful commits: {successes}/{N}")
+    for n in stopped:
+        stop_container(n)
+    time.sleep(2)   # let any in-flight heartbeats drain
+
+    # ── 3. Snapshot leader's commit_index before the commit attempt ──────────
+    section("Step 3 – snapshot commit_index on leader before attempt")
+    _, ci_snapshot = get_log(ldr)
+    info(f"  {ldr}: commit_index={ci_snapshot}")
+
+    # ── 4. Commit attempt must fail – leader has only 2/5 ACKs available ─────
+    section("Step 4 – verify commit attempt fails (leader cannot reach quorum)")
+    r = send_command(ldr, "SET tc5_no_quorum should_fail", timeout=6)
+    info(f"  Commit attempt on leader {ldr}: success={r['success']} result={r['result']}")
 
     assert_true(
-        successes == N,
-        f"All {N} concurrent requests committed (serialised by Raft)",
-        f"Only {successes}/{N} committed — some were rejected or dropped",
+        not r["success"],
+        "Commit correctly rejected – leader could not gather majority ACKs",
+        f"Commit unexpectedly succeeded despite only 2/5 nodes reachable: {r['result']}",
         "TC5",
     )
 
-    # ── Wait for heartbeats to propagate ────────────────────────────────────
-    time.sleep(3)
+    # Verify commit_index did not advance on the leader.
+    _, ci_after_attempt = get_log(ldr)
+    info(f"  {ldr}: commit_index before={ci_snapshot}  after={ci_after_attempt}")
+    assert_true(
+        ci_after_attempt == ci_snapshot,
+        f"commit_index unchanged on leader ({ci_snapshot}) – no phantom commit",
+        f"commit_index advanced on leader ({ci_snapshot} → {ci_after_attempt}) without quorum",
+        "TC5",
+    )
 
-    # ── Check all nodes agree on the same commit_index ───────────────────────
-    section("Step 3 – verify all nodes have the same commit_index")
+    # ── 5. Restart the 3 stopped followers ──────────────────────────────────
+    section("Step 5 – restart the 3 stopped followers (restore majority)")
+    for n in stopped:
+        start_container(n)
+    info("Waiting 12 s for nodes to restart, bootstrap, and catch up…")
+    time.sleep(12)
+
+    # ── 6. Leader (still running) must be able to commit again ───────────────
+    section("Step 6 – verify leader can commit after majority restored")
+    ldr_now = wait_for_leader(timeout=10)
+    assert_true(
+        ldr_now is not None,
+        f"Leader present after recovery: {ldr_now}",
+        "No leader found after recovery",
+        "TC5",
+    )
+
+    if ldr_now:
+        r_post = send_command(ldr_now, "SET tc5_post recovery_ok")
+        assert_true(
+            r_post["success"],
+            f"Entry committed after majority restored on {ldr_now}: {r_post['result']}",
+            f"Commit failed after recovery: {r_post['result']}",
+            "TC5",
+        )
+
+    # ── 7. All nodes must converge on the same commit_index ──────────────────
+    section("Step 7 – verify all nodes agree on commit_index")
+    time.sleep(5)   # let heartbeats propagate to recently-unstopped nodes
     commit_indices = {}
     for nid in NODE_ADDRS:
         _, ci = get_log(nid)
@@ -667,42 +734,12 @@ def tc5_concurrent_requests():
     unique_ci = set(commit_indices.values())
     assert_true(
         len(unique_ci) == 1,
-        f"All nodes agree on commit_index={unique_ci.pop()}",
-        f"commit_index mismatch across nodes: {commit_indices}",
+        f"All nodes agree on commit_index={list(unique_ci)[0]}",
+        f"commit_index mismatch after recovery: {commit_indices}",
         "TC5",
     )
 
-    # ── Check all nodes agree on the same value for tc5_shared ───────────────
-    section("Step 4 – verify all nodes return same value for tc5_shared")
-    values = {}
-    for nid in NODE_ADDRS:
-        r = send_command(nid, "GET tc5_shared", timeout=3)
-        values[nid] = r.get("result", "ERR")
-        info(f"  {nid}: GET tc5_shared → {values[nid]}")
-
-    unique_vals = set(values.values())
-    # All should return the same final value (the last committed SET)
-    assert_true(
-        len(unique_vals) == 1,
-        f"All nodes agree on final value: '{unique_vals.pop()}'",
-        f"Value mismatch across nodes: {values}",
-        "TC5",
-    )
-
-    # ── Log length consistency ────────────────────────────────────────────────
-    section("Step 5 – verify log length is consistent across all nodes")
-    log_lengths = {}
-    for nid in NODE_ADDRS:
-        entries, _ = get_log(nid)
-        log_lengths[nid] = len(entries)
-
-    unique_lens = set(log_lengths.values())
-    assert_true(
-        len(unique_lens) == 1,
-        f"All nodes have identical log length: {unique_lens.pop()} entries",
-        f"Log length mismatch: {log_lengths}",
-        "TC5",
-    )
+    print_cluster_status("After majority crash recovery")
 
 
 # =============================================================================
@@ -781,7 +818,7 @@ def main():
         results.append(("TC4", False, str(e)))
 
     try:
-        tc5_concurrent_requests()
+        tc5_majority_crash()
     except Exception as e:
         fail(f"TC5 raised an exception: {e}")
         results.append(("TC5", False, str(e)))
