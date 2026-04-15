@@ -6,7 +6,7 @@
 
 ## Overview
 
-This component extends the distributed library system with a **Two-Phase Commit (2PC)** protocol for the book checkout operation. Rather than sequentially calling each microservice and risking partial failure, 2PC coordinates an atomic transaction across the **Inventory** and **Users** services: either both commit or neither does.
+This component extends the distributed library system with a **Two-Phase Commit (2PC)** protocol for the book checkout operation. Rather than sequentially calling each microservice and risking partial failure, 2PC coordinates an atomic transaction across the **Inventory**, **Users**, and **Circulation** services: either all three commit or none does.
 
 ---
 
@@ -38,22 +38,26 @@ Browser
 Gateway (FastAPI)
    │  BeginTransaction (gRPC)
    ▼
-2PC Coordinator ──── Phase 1: RequestVote ────▶ twopc-inventory ──▶ inventory service
-                                               ▶ twopc-users     ──▶ users service
+2PC Coordinator ──── Phase 1: RequestVote ────▶ twopc-inventory    ──▶ inventory service
+                                               ▶ twopc-users        ──▶ users service
+                                               ▶ twopc-circulation  ──▶ circulation service
                 │
                 │  (all COMMIT → Phase 2: Commit; any ABORT → Phase 2: Abort)
                 │
                 └── Phase 2: Commit / Abort ──▶ twopc-inventory
                                                ▶ twopc-users
+                                               ▶ twopc-circulation
 ```
 
-Three containers handle 2PC:
+Five components handle 2PC:
 
-| Container | Role |
+| Component | Role |
 |-----------|------|
+| `gateway` | Entry point: exposes `GET /2pc` (UI) and `POST /2pc/checkout` (form submit); calls coordinator via gRPC |
 | `twopc-coordinator` | Drives both phases; makes the global decision |
 | `twopc-inventory` | Participant: checks stock in Phase 1, decrements in Phase 2 |
 | `twopc-users` | Participant: verifies user exists in Phase 1, acknowledges in Phase 2 |
+| `twopc-circulation` | Participant: always votes COMMIT in Phase 1, records the loan in Phase 2 |
 
 ---
 
@@ -71,8 +75,11 @@ Three containers handle 2PC:
 │   │   ├── inventory_participant/
 │   │   │   ├── app.py                       # Participant: inventory vote + commit
 │   │   │   └── Dockerfile
-│   │   └── users_participant/
-│   │       ├── app.py                       # Participant: user-exists vote
+│   │   ├── users_participant/
+│   │   │   ├── app.py                       # Participant: user-exists vote
+│   │   │   └── Dockerfile
+│   │   └── circulation_participant/
+│   │       ├── app.py                       # Participant: always votes COMMIT, records loan on commit
 │   │       └── Dockerfile
 │   └── gateway/
 │       ├── app.py                           # /2pc and /2pc/checkout routes (modified)
@@ -94,19 +101,34 @@ Three containers handle 2PC:
 
 | Service | RPC | Direction | Purpose |
 |---------|-----|-----------|---------|
-| `CoordinatorService` | `BeginTransaction` | Gateway → Coordinator | Start a full 2PC transaction |
+| `CoordinatorService` | `BeginTransaction` | Gateway → Coordinator | Start a full 2PC transaction; returns votes, acks, and summary |
 | `ParticipantService` | `RequestVote` | Coordinator → Participant | Phase 1: ask if participant can commit |
 | `ParticipantService` | `Commit` | Coordinator → Participant | Phase 2: execute the change |
 | `ParticipantService` | `Abort` | Coordinator → Participant | Phase 2: roll back (no-op if nothing written) |
 
+### Gateway Interaction
+
+The gateway is the only component that is directly accessible from the browser. It exposes two HTTP endpoints for 2PC:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/2pc` | Renders the 2PC checkout form (`twopc.html`) |
+| `POST` | `/2pc/checkout` | Accepts `book_id` and `user_id` form fields; calls `coordinator.BeginTransaction`; renders the result |
+
+On `POST /2pc/checkout`, the gateway:
+1. Logs `"Phase initiating of Node gateway sends RPC BeginTransaction to Phase voting of Node twopc-coordinator"`.
+2. Calls `BeginTransaction(operation="CHECKOUT", book_id=..., user_id=...)` on the coordinator via gRPC.
+3. Unpacks the `BeginResponse` (transaction ID, votes, acks, summary) and passes it to `twopc.html` for rendering.
+
 ### Phase 1 — Vote
 
-The coordinator fans out `RequestVote` to both participants **concurrently**. Each participant independently decides:
+The coordinator fans out `RequestVote` to all three participants **concurrently**. Each participant independently decides:
 
 - **`twopc-inventory`** — calls `inventory.GetAvailability(book_id)`. Votes `COMMIT` if `available > 0`, otherwise `ABORT`.
 - **`twopc-users`** — calls `users.GetUser(user_id)`. Votes `COMMIT` if the user record exists, otherwise `ABORT`.
+- **`twopc-circulation`** — always votes `COMMIT`; it has no precondition to check since the real guards are stock and user existence.
 
-If either participant is **unreachable**, the coordinator treats it as `ABORT`.
+If any participant is **unreachable**, the coordinator treats it as `ABORT`.
 
 ### Phase 2 — Decision
 
@@ -117,10 +139,11 @@ If either participant is **unreachable**, the coordinator treats it as `ABORT`.
 
 **On Commit:**
 - `twopc-inventory` calls `inventory.DecrementCopy(book_id)` — stock is reduced only here.
-- `twopc-users` acknowledges — no state change needed (checkout is recorded by the circulation service on the normal path).
+- `twopc-users` acknowledges — no state change needed; the users record itself is unmodified.
+- `twopc-circulation` calls `circulation.CheckoutBook(book_id, user_id)` — the loan record is created here, and the due date is returned.
 
 **On Abort:**
-- Both participants return immediately. No state was modified during the vote phase, so no rollback is needed.
+- All three participants return immediately. No state was modified during the vote phase, so no rollback is needed.
 
 ---
 
@@ -133,7 +156,7 @@ docker compose build --no-cache
 docker compose up
 ```
 
-The `twopc-coordinator`, `twopc-inventory`, and `twopc-users` containers start alongside the existing library services.
+The `twopc-coordinator`, `twopc-inventory`, `twopc-users`, and `twopc-circulation` containers start alongside the existing library services, and the `gateway` container is already running as the system's HTTP entry point.
 
 ### Step 2 — Open the 2PC UI
 
@@ -152,18 +175,20 @@ Enter a **User ID** and **Book ID**, then click **Begin Transaction**. The page 
 
 ## Example Outcomes
 
-### Successful checkout (both participants commit)
+### Successful checkout (all participants commit)
 
 ```
 Transaction: a3f1b2c4
 
 Phase 1 — Vote
-  inventory   COMMIT   Book available: 3 copies in stock
-  users       COMMIT   User 'alice' is registered
+  inventory    COMMIT   Book available: 3 copies in stock
+  users        COMMIT   User 'alice' is registered
+  circulation  COMMIT   Circulation service ready to record loan
 
 Phase 2 — Commit
-  inventory   OK       Stock decremented — 2 remaining
-  users       OK       User 'alice' authorized for checkout
+  inventory    OK       Stock decremented — 2 remaining
+  users        OK       User 'alice' authorized for checkout
+  circulation  OK       Loan recorded — due 2025-05-15
 
 Result: GLOBAL COMMIT
 ```
@@ -174,12 +199,14 @@ Result: GLOBAL COMMIT
 Transaction: 9d72e1a0
 
 Phase 1 — Vote
-  inventory   ABORT    Book out of stock
-  users       COMMIT   User 'alice' is registered
+  inventory    ABORT    Book out of stock
+  users        COMMIT   User 'alice' is registered
+  circulation  COMMIT   Circulation service ready to record loan
 
 Phase 2 — Abort
-  inventory   OK       Aborted — no inventory changes made
-  users       OK       Aborted — no user record changes made
+  inventory    OK       Aborted — no inventory changes made
+  users        OK       Aborted — no user record changes made
+  circulation  OK       Aborted — no circulation record created
 
 Result: GLOBAL ABORT
 ```
@@ -190,12 +217,14 @@ Result: GLOBAL ABORT
 Transaction: 5c8f3b11
 
 Phase 1 — Vote
-  inventory   COMMIT   Book available: 1 copy in stock
-  users       ABORT    User 'unknown_user' not found
+  inventory    COMMIT   Book available: 1 copy in stock
+  users        ABORT    User 'unknown_user' not found
+  circulation  COMMIT   Circulation service ready to record loan
 
 Phase 2 — Abort
-  inventory   OK       Aborted — no inventory changes made
-  users       OK       Aborted — no user record changes made
+  inventory    OK       Aborted — no inventory changes made
+  users        OK       Aborted — no user record changes made
+  circulation  OK       Aborted — no circulation record created
 
 Result: GLOBAL ABORT
 ```
@@ -205,13 +234,13 @@ Result: GLOBAL ABORT
 ## Troubleshooting
 
 **`twopc-coordinator` exits immediately**
-Check that `twopc-inventory` and `twopc-users` are healthy first — the coordinator's `depends_on` waits for them to start but not for their gRPC servers to be ready. If the coordinator retries are exhausted, restart it:
+Check that `twopc-inventory`, `twopc-users`, and `twopc-circulation` are healthy first — the coordinator's `depends_on` waits for them to start but not for their gRPC servers to be ready. If the coordinator retries are exhausted, restart it:
 ```bash
 docker compose restart twopc-coordinator
 ```
 
 **UI shows no result after submitting**
-Verify all three 2PC containers are running:
+Verify all four 2PC containers are running:
 ```bash
 docker compose ps | grep twopc
 ```
@@ -227,5 +256,5 @@ python -m grpc_tools.protoc \
 ```
 Then rebuild the affected containers:
 ```bash
-docker compose build --no-cache twopc-coordinator twopc-inventory twopc-users gateway
+docker compose build --no-cache twopc-coordinator twopc-inventory twopc-users twopc-circulation gateway
 ```
