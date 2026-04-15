@@ -10,6 +10,7 @@ COPY services/twopc/coordinator ./services/twopc/coordinator
 
 ENV PYTHONPATH=/app
 ENV PORT=50051
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app/services/twopc/coordinator
 EXPOSE 50051

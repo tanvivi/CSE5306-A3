@@ -10,6 +10,7 @@ COPY services/twopc/inventory_participant ./services/twopc/inventory_participant
 
 ENV PYTHONPATH=/app
 ENV PORT=50051
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app/services/twopc/inventory_participant
 EXPOSE 50051

@@ -14,6 +14,7 @@ from shared.gen import twopc_pb2, twopc_pb2_grpc
 from shared.gen import inventory_pb2, inventory_pb2_grpc
 
 INVENTORY_ADDR = os.getenv("INVENTORY_ADDR", "inventory:50051")
+NODE_ID = os.getenv("NODE_ID", "twopc-inventory")
 
 
 class InventoryParticipant(twopc_pb2_grpc.ParticipantServiceServicer):
@@ -21,6 +22,8 @@ class InventoryParticipant(twopc_pb2_grpc.ParticipantServiceServicer):
     # ── Phase 1 ───────────────────────────────────────────────────────────────
 
     def RequestVote(self, request, context):
+        print(f"Phase voting of Node {NODE_ID} receives RPC RequestVote "
+              f"from Phase voting of Node twopc-coordinator")
         print(f"[inventory-participant] vote  txn={request.transaction_id} "
               f"book={request.book_id}")
 
@@ -64,6 +67,8 @@ class InventoryParticipant(twopc_pb2_grpc.ParticipantServiceServicer):
     # ── Phase 2 ───────────────────────────────────────────────────────────────
 
     def Commit(self, request, context):
+        print(f"Phase decision of Node {NODE_ID} receives RPC Commit "
+              f"from Phase decision of Node twopc-coordinator")
         print(f"[inventory-participant] commit txn={request.transaction_id} "
               f"book={request.book_id}")
         try:
@@ -88,6 +93,8 @@ class InventoryParticipant(twopc_pb2_grpc.ParticipantServiceServicer):
             )
 
     def Abort(self, request, context):
+        print(f"Phase decision of Node {NODE_ID} receives RPC Abort "
+              f"from Phase decision of Node twopc-coordinator")
         print(f"[inventory-participant] abort  txn={request.transaction_id} "
               f"book={request.book_id}")
         # Nothing was changed during vote phase, so nothing to undo

@@ -347,6 +347,8 @@ def twopc_page(request: Request):
 
 @app.post("/2pc/checkout", response_class=HTMLResponse)
 def twopc_checkout(request: Request, book_id: str = Form(...), user_id: str = Form(...)):
+    print("Phase initiating of Node gateway sends RPC BeginTransaction "
+          "to Phase voting of Node twopc-coordinator", flush=True)
     res = grpc_clients.twopc_coordinator_stub().BeginTransaction(
         twopc_pb2.BeginRequest(operation="CHECKOUT", book_id=book_id, user_id=user_id)
     )

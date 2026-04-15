@@ -12,9 +12,12 @@ import uuid
 import grpc
 from shared.gen import twopc_pb2, twopc_pb2_grpc
 
+NODE_ID = os.getenv("NODE_ID", "twopc-coordinator")
+
 PARTICIPANTS = {
-    "inventory": os.getenv("INVENTORY_PARTICIPANT_ADDR", "twopc-inventory:50051"),
-    "users":     os.getenv("USERS_PARTICIPANT_ADDR",     "twopc-users:50051"),
+    "inventory":   os.getenv("INVENTORY_PARTICIPANT_ADDR",   "twopc-inventory:50051"),
+    "users":       os.getenv("USERS_PARTICIPANT_ADDR",       "twopc-users:50051"),
+    "circulation": os.getenv("CIRCULATION_PARTICIPANT_ADDR", "twopc-circulation:50051"),
 }
 
 
@@ -33,6 +36,8 @@ class CoordinatorService(twopc_pb2_grpc.CoordinatorServiceServicer):
             try:
                 with grpc.insecure_channel(addr) as ch:
                     stub = twopc_pb2_grpc.ParticipantServiceStub(ch)
+                    print(f"Phase voting of Node {NODE_ID} sends RPC RequestVote "
+                          f"to Phase voting of Node twopc-{name}")
                     resp = stub.RequestVote(
                         twopc_pb2.VoteRequest(
                             transaction_id=txn_id,
@@ -81,8 +86,12 @@ class CoordinatorService(twopc_pb2_grpc.CoordinatorServiceServicer):
                 with grpc.insecure_channel(addr) as ch:
                     stub = twopc_pb2_grpc.ParticipantServiceStub(ch)
                     if all_commit:
+                        print(f"Phase decision of Node {NODE_ID} sends RPC Commit "
+                              f"to Phase decision of Node twopc-{name}")
                         ack = stub.Commit(req, timeout=5)
                     else:
+                        print(f"Phase decision of Node {NODE_ID} sends RPC Abort "
+                              f"to Phase decision of Node twopc-{name}")
                         ack = stub.Abort(req, timeout=5)
                     raw_acks.append(ack)
                     print(f"[coordinator] ack   {name}: ok={ack.ok} — {ack.message}")

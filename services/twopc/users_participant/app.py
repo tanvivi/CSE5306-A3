@@ -14,6 +14,7 @@ from shared.gen import twopc_pb2, twopc_pb2_grpc
 from shared.gen import users_pb2, users_pb2_grpc
 
 USERS_ADDR = os.getenv("USERS_ADDR", "users:50051")
+NODE_ID = os.getenv("NODE_ID", "twopc-users")
 
 
 class UsersParticipant(twopc_pb2_grpc.ParticipantServiceServicer):
@@ -21,6 +22,8 @@ class UsersParticipant(twopc_pb2_grpc.ParticipantServiceServicer):
     # ── Phase 1 ───────────────────────────────────────────────────────────────
 
     def RequestVote(self, request, context):
+        print(f"Phase voting of Node {NODE_ID} receives RPC RequestVote "
+              f"from Phase voting of Node twopc-coordinator")
         print(f"[users-participant] vote  txn={request.transaction_id} "
               f"user={request.user_id}")
         try:
@@ -54,6 +57,8 @@ class UsersParticipant(twopc_pb2_grpc.ParticipantServiceServicer):
     # ── Phase 2 ───────────────────────────────────────────────────────────────
 
     def Commit(self, request, context):
+        print(f"Phase decision of Node {NODE_ID} receives RPC Commit "
+              f"from Phase decision of Node twopc-coordinator")
         print(f"[users-participant] commit txn={request.transaction_id} "
               f"user={request.user_id}")
         return twopc_pb2.AckResponse(
@@ -64,6 +69,8 @@ class UsersParticipant(twopc_pb2_grpc.ParticipantServiceServicer):
         )
 
     def Abort(self, request, context):
+        print(f"Phase decision of Node {NODE_ID} receives RPC Abort "
+              f"from Phase decision of Node twopc-coordinator")
         print(f"[users-participant] abort  txn={request.transaction_id} "
               f"user={request.user_id}")
         return twopc_pb2.AckResponse(

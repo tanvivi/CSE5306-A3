@@ -84,11 +84,14 @@ services:
     container_name: twopc-coordinator
     environment:
       - PORT=50051
+      - NODE_ID=twopc-coordinator
       - INVENTORY_PARTICIPANT_ADDR=twopc-inventory:50051
       - USERS_PARTICIPANT_ADDR=twopc-users:50051
+      - CIRCULATION_PARTICIPANT_ADDR=twopc-circulation:50051
     depends_on:
       - twopc-inventory
       - twopc-users
+      - twopc-circulation
 
   twopc-inventory:
     build:
@@ -97,6 +100,7 @@ services:
     container_name: twopc-inventory
     environment:
       - PORT=50051
+      - NODE_ID=twopc-inventory
       - INVENTORY_ADDR=inventory:50051
     depends_on:
       - inventory
@@ -108,9 +112,22 @@ services:
     container_name: twopc-users
     environment:
       - PORT=50051
+      - NODE_ID=twopc-users
       - USERS_ADDR=users:50051
     depends_on:
       - users
+
+  twopc-circulation:
+    build:
+      context: .
+      dockerfile: services/twopc/circulation_participant/Dockerfile
+    container_name: twopc-circulation
+    environment:
+      - PORT=50051
+      - NODE_ID=twopc-circulation
+      - CIRCULATION_ADDR=circulation:50051
+    depends_on:
+      - circulation
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Raft Cluster  (5 nodes, Q3 + Q4)
