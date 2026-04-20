@@ -1,6 +1,4 @@
-# CSE5306 – Project 2: Distributed Library System with Raft Consensus
-
-**Authors:** Evelyn Lopez Paz & Aadhitya Kumar
+# CSE5306 – Project 3: Distributed Library System with Raft Consensus
 
 ---
 

@@ -1,7 +1,4 @@
 # CSE5306 – Two-Phase Commit (2PC) for Distributed Checkout
-
-**Authors:** Evelyn Lopez Paz & Aadhitya Kumar
-
 ---
 
 ## Overview
